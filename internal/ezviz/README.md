@@ -37,9 +37,19 @@ streams:
 The `ffmpeg:` source pulls its input over go2rtc's internal RTSP, so the `rtsp:`
 module must stay enabled (it is by default).
 
+## How it works
+
+`pkg/ezviz` speaks the cloud P2P protocol end to end:
+
+1. REST login to the Hik-Connect / EZVIZ account, fetch the per-session P2P
+   secret and device routing config (credentials-only — no hardcoded keys).
+2. `P2P_SETUP` against the cloud, UDP hole-punch to reach the device directly.
+3. `PLAY_REQUEST` → SRT handshake → encrypted media.
+4. De-frame Hik-RTP, reassemble fragmented NALs, and hand whole H.265 / H.264
+   access units to go2rtc via the RAW path; codec parameters are probed from the
+   live stream.
+
 ## Status
 
-Data plane (codec probe → HEVC/H264 NAL handoff into go2rtc) is wired and tested.
-The cloud P2P transport (`pkg/ezviz/client.go`) is implemented in a follow-up;
-see the responsibilities documented on the `Client` type. The protocol is
-credentials-only (no hardcoded keys), HEVC main + sub, live preview.
+Verified end to end against real hardware (4K NVR): login → P2P → SRT → HEVC,
+sustained live preview at full resolution, `main` and `sub` both working.
