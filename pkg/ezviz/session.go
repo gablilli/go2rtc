@@ -115,6 +115,12 @@ type session struct {
 	audioFrameNo uint32
 	audioTS      uint32 // 8 kHz audio sample clock
 
+	// epoch anchors both media clocks to one real-time reference. The device
+	// exposes no usable per-frame PTS, so arrival time is the reference; sharing
+	// one epoch keeps the audio and video tracks in sync (they ride the same SRT
+	// session, so capture-to-arrival latency is shared and cancels out).
+	epoch time.Time
+
 	frames     chan *Frame
 	punchCh    chan struct{}
 	punchOnce  sync.Once
@@ -919,8 +925,15 @@ func (s *session) feed(payload []byte) {
 		return
 	}
 
-	for _, nal := range s.extractor.process(payload) {
-		s.push(&Frame{Codec: CodecH265, Payload: nal, Timestamp: s.nextTimestamp(), FrameNo: s.nextFrameNo()})
+	// One arrival is one access unit; all NALs it yields (e.g. VPS/SPS/PPS/IDR)
+	// must share a single PTS, so stamp once per payload rather than per NAL.
+	nals := s.extractor.process(payload)
+	if len(nals) == 0 {
+		return
+	}
+	ts := s.nextTimestamp()
+	for _, nal := range nals {
+		s.push(&Frame{Codec: CodecH265, Payload: nal, Timestamp: ts, FrameNo: s.nextFrameNo()})
 	}
 }
 
@@ -948,10 +961,24 @@ func (s *session) nextFrameNo() uint32 {
 	return s.frameNo
 }
 
-// nextTimestamp advances a 90 kHz clock. The Hik-RTP framing exposes no usable
-// per-NAL PTS, so a monotonic counter stands in; the producer tolerates it.
+// mediaTicks returns the elapsed time since the session epoch scaled to the
+// given clock rate (90 kHz for video, 8 kHz for audio), setting the epoch on the
+// first call. Video frames are timestamped by arrival because the device sends
+// at a variable real rate (~19 fps observed, not a fixed 30) and exposes no
+// per-frame PTS; a synthetic fixed-fps counter compressed the video timeline and
+// drifted it out of sync with the real-time audio. Caller must hold s.mu.
+func (s *session) mediaTicks(hz float64) uint32 {
+	if s.epoch.IsZero() {
+		s.epoch = time.Now()
+	}
+	return uint32(time.Since(s.epoch).Seconds() * hz)
+}
+
+// nextTimestamp returns the 90 kHz video PTS for a frame arriving now.
 func (s *session) nextTimestamp() uint32 {
-	return s.frameNo * 3000 // ~30 fps at 90 kHz
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mediaTicks(90000)
 }
 
 // nextAudio returns the RTP timestamp (8 kHz sample clock) and sequence number
@@ -960,6 +987,12 @@ func (s *session) nextTimestamp() uint32 {
 func (s *session) nextAudio(samples int) (ts, seq uint32) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Anchor the first audio frame to the shared epoch so the audio track lines
+	// up with video; thereafter advance by the exact sample count for a smooth,
+	// jitter-free audio clock (audio arrives gap-free at real 8 kHz).
+	if s.audioFrameNo == 0 {
+		s.audioTS = s.mediaTicks(8000)
+	}
 	ts = s.audioTS
 	s.audioTS += uint32(samples)
 	s.audioFrameNo++
