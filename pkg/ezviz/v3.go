@@ -3,7 +3,7 @@ package ezviz
 // V3 is the Hik-Connect/EZVIZ binary control protocol spoken over UDP between
 // the client and the device during P2P_SETUP, hole-punch and PLAY_REQUEST. The
 // wire format was reverse-engineered from Hikvision's libezstreamclient.so with
-// Ghidra. See docs/re/v3-protocol-opcodes.md for the full specification.
+// Ghidra. See PROTOCOL.md in this package for the full specification.
 //
 // Frame layout (big-endian multi-byte fields):
 //

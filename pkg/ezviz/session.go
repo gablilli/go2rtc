@@ -4,7 +4,8 @@ package ezviz
 // device through the Hik-Connect cloud. The wire protocol — the V3 control
 // opcodes, the hole-punch handshake, and the device's proprietary SRT dialect —
 // was reverse-engineered from libezstreamclient.so and iVMS-4200 with Ghidra and
-// validated against live packet captures.
+// validated against live packet captures. See PROTOCOL.md in this package for
+// the full wire-format and transport-mix specification.
 //
 // Flow:
 //

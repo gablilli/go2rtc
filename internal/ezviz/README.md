@@ -57,3 +57,19 @@ module must stay enabled (it is by default).
 Verified end to end against real hardware (4K NVR): login → P2P → SRT → HEVC,
 sustained live preview at full resolution, `main` and `sub` both working, with
 interleaved G.711 (A-law / PCMA) audio.
+
+### Transport mix tested
+
+Media flowed over the **direct, hole-punched P2P path** in every verified run:
+once the UDP hole-punch completes, SRT media goes device → client over the
+punched socket. The client was behind a normal home/office NAT; testing a
+symmetric-NAT setup did not force a different path for this device.
+
+`PLAY_REQUEST` is sent on two paths for reliability — directly to the device and,
+in parallel, wrapped in a `TRANSFOR_DATA` message relayed through the P2P server.
+That relay carries only the *control* request as a belt-and-suspenders; **media
+itself never traverses a relay**, and there is no TCP media-relay fallback in
+this implementation. So "relayed" here means relayed control, not relayed video.
+
+See `pkg/ezviz/PROTOCOL.md` for the full wire format and the direct-vs-relayed
+breakdown.
