@@ -34,8 +34,18 @@ streams:
   garage_h264: ffmpeg:garage#video=h264#audio=copy#hardware=cuda   # drop #hardware=cuda for software
 ```
 
-Keep `#audio=copy`: the interleaved G.711 (PCMA) track plays over WebRTC as-is, but
-`ffmpeg:` drops audio unless an `#audio=` directive is present.
+Keep an `#audio=` directive: `ffmpeg:` drops audio without one. Which codec
+depends on the player:
+
+- **WebRTC** plays the interleaved G.711 (PCMA) track as-is, so `#audio=copy`
+  works and avoids re-encoding.
+- **MSE** (the default `stream.html` player in most browsers) cannot decode
+  PCMA, so a `#audio=copy` stream plays silently there. Transcode to AAC with
+  `#audio=aac` for an MSE-audible stream:
+
+  ```yaml
+  garage_mse: ffmpeg:garage#video=h264#audio=aac#hardware=cuda
+  ```
 
 The `ffmpeg:` source pulls its input over go2rtc's internal RTSP, so the `rtsp:`
 module must stay enabled (it is by default).
