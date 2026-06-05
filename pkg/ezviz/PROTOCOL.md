@@ -64,9 +64,9 @@ and returns one per session, identified by `saltIndex`/`saltVersion`).
 | `0x0B03` | TRANSFOR_CTRL  | Server response carrying the device's stream port           |
 | `0x0B04` | TRANSFOR_DATA  | Wrapper used to relay a control message through the server  |
 | `0x0C00` | hole-punch req | Sent by the device to open the NAT path to us               |
-| `0x0C01` | hole-punch rsp | Our reply (sent 10×) that completes the punch                |
+| `0x0C01` | hole-punch rsp | Our reply (sent 10×) that completes the punch               |
 | `0x0C02` | PLAY_REQUEST   | Start the stream (busType/channel/streamType/session)       |
-| `0x0C04` | TEARDOWN       | Stop the stream                                              |
+| `0x0C04` | TEARDOWN       | Stop the stream                                             |
 
 ## P2P session flow
 
