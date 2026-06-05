@@ -22,6 +22,21 @@ streams:
 `hikconnect:` and `ezviz:` are interchangeable aliases for the same source — use
 whichever matches the app you registered the device in.
 
+## Browser playback
+
+The device streams HEVC (H.265). Browsers play H.264 over WebRTC/MSE but generally
+not raw H.265, so for a browser-facing stream transcode to H.264 with an `ffmpeg:`
+source — hardware-accelerated where available:
+
+```yaml
+streams:
+  garage:      ezviz://ACCOUNT:PASSWORD@api.hik-connect.com/SERIAL?channel=4&subtype=main
+  garage_h264: ffmpeg:garage#video=h264#hardware=cuda   # drop #hardware=cuda for software
+```
+
+The `ffmpeg:` source pulls its input over go2rtc's internal RTSP, so the `rtsp:`
+module must stay enabled (it is by default).
+
 ## Status
 
 Data plane (codec probe → HEVC/H264 NAL handoff into go2rtc) is wired and tested.
