@@ -258,3 +258,43 @@ func TestExtractPlaybackPayload_IgnoresEmpty(t *testing.T) {
 		t.Fatalf("expected nil, got %x", out)
 	}
 }
+
+// audioPacket builds a live audio Hik-RTP packet: 12B header + 13B sub-header
+// (0x0d, 0x80, 0x88=audio, …) + raw G.711 samples.
+func audioPacket(samples []byte) []byte {
+	rtp := make([]byte, subHeaderLen)
+	rtp[0] = 0x0d
+	rtp[1] = 0x80
+	rtp[2] = audioSubType
+	rtp = append(rtp, samples...)
+	packet := append(make([]byte, hikRTPHeaderLen), rtp...)
+	binary.BigEndian.PutUint16(packet, 0x8060)
+	return packet
+}
+
+func TestExtractAudioPayload_StripsSubHeader(t *testing.T) {
+	samples := []byte{0x65, 0xe5, 0x64, 0xe4}
+	if out := extractAudioPayload(audioPacket(samples)); !bytes.Equal(out, samples) {
+		t.Fatalf("got %x want %x", out, samples)
+	}
+}
+
+func TestExtractAudioPayload_VideoReturnsNil(t *testing.T) {
+	// A video sub-header (byte 2 != 0x88) must not be treated as audio.
+	rtp := make([]byte, subHeaderLen+2)
+	rtp[0] = 0x0d
+	rtp[1] = 0x90
+	packet := append(make([]byte, hikRTPHeaderLen), rtp...)
+	binary.BigEndian.PutUint16(packet, 0x8060)
+	if out := extractAudioPayload(packet); out != nil {
+		t.Fatalf("expected nil for video packet, got %x", out)
+	}
+}
+
+func TestProcess_SkipsAudio(t *testing.T) {
+	// The video extractor must keep dropping audio so the NAL stream stays clean.
+	e := newHikRTPExtractor()
+	if nals := e.process(audioPacket([]byte{0x65, 0xe5, 0x64, 0xe4})); nals != nil {
+		t.Fatalf("video extractor must skip audio, got %d NALs", len(nals))
+	}
+}

@@ -112,6 +112,9 @@ type session struct {
 	extractor *hikRTPExtractor
 	frameNo   uint32
 
+	audioFrameNo uint32
+	audioTS      uint32 // 8 kHz audio sample clock
+
 	frames     chan *Frame
 	punchCh    chan struct{}
 	punchOnce  sync.Once
@@ -908,6 +911,14 @@ func (s *session) feed(payload []byte) {
 		return
 	}
 
+	// Audio is interleaved on the same SRT data session as video, distinguished
+	// by the sub-header. Surface G.711 frames on the audio track.
+	if a := extractAudioPayload(payload); a != nil {
+		ts, seq := s.nextAudio(len(a))
+		s.push(&Frame{Codec: CodecPCMA, Payload: append([]byte(nil), a...), Timestamp: ts, FrameNo: seq})
+		return
+	}
+
 	for _, nal := range s.extractor.process(payload) {
 		s.push(&Frame{Codec: CodecH265, Payload: nal, Timestamp: s.nextTimestamp(), FrameNo: s.nextFrameNo()})
 	}
@@ -941,6 +952,18 @@ func (s *session) nextFrameNo() uint32 {
 // per-NAL PTS, so a monotonic counter stands in; the producer tolerates it.
 func (s *session) nextTimestamp() uint32 {
 	return s.frameNo * 3000 // ~30 fps at 90 kHz
+}
+
+// nextAudio returns the RTP timestamp (8 kHz sample clock) and sequence number
+// for the next audio frame, advancing the audio clock by the frame's sample
+// count (1 byte = 1 sample for G.711).
+func (s *session) nextAudio(samples int) (ts, seq uint32) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ts = s.audioTS
+	s.audioTS += uint32(samples)
+	s.audioFrameNo++
+	return ts, s.audioFrameNo
 }
 
 // -- ACK / keepalive ticker --

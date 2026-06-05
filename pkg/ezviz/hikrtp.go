@@ -59,6 +59,37 @@ func extractPlaybackPayload(payload []byte) []byte {
 	return payload[hikRTPHeaderLen:]
 }
 
+// audioSubType marks an audio sub-frame in the Hik-RTP sub-header (byte 2).
+const audioSubType = 0x88
+
+// extractAudioPayload returns the raw audio samples (G.711 A-law) of an audio
+// Hik-RTP packet, or nil if the packet is not audio. Audio shares the video
+// packet types (0x8060/0x8050/0x8051) and the 13-byte sub-header layout, and is
+// distinguished only by sub-header byte 2 == 0x88. hikRTPExtractor.process
+// discards these so the video NAL stream stays clean; this surfaces them for
+// the audio track.
+func extractAudioPayload(payload []byte) []byte {
+	if len(payload) <= hikRTPHeaderLen {
+		return nil
+	}
+	if !isVideoPacketType(binary.BigEndian.Uint16(payload)) {
+		return nil
+	}
+	rtp := payload[hikRTPHeaderLen:]
+	if len(rtp) <= subHeaderLen || rtp[0] != 0x0d {
+		return nil
+	}
+	switch rtp[1] & 0xf0 {
+	case 0x80, 0x90, 0xa0, 0xd0:
+	default:
+		return nil
+	}
+	if rtp[2] != audioSubType {
+		return nil
+	}
+	return rtp[subHeaderLen:]
+}
+
 // hikRTPExtractor reassembles whole H.265 NAL units from a sequence of Hik-RTP
 // data payloads. It is stateful across packets to carry RFC 7798 FU fragments.
 type hikRTPExtractor struct {

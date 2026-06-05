@@ -74,11 +74,21 @@ func probe(client *Client) ([]*core.Media, error) {
 		}
 	}
 
-	return []*core.Media{{
-		Kind:      core.KindVideo,
-		Direction: core.DirectionRecvonly,
-		Codecs:    []*core.Codec{vcodec},
-	}}, nil
+	return []*core.Media{
+		{
+			Kind:      core.KindVideo,
+			Direction: core.DirectionRecvonly,
+			Codecs:    []*core.Codec{vcodec},
+		},
+		{
+			// Live audio is interleaved as G.711 A-law. The codec is fixed, so
+			// the media is advertised without probing; channels that send no
+			// audio simply never produce packets on this track.
+			Kind:      core.KindAudio,
+			Direction: core.DirectionRecvonly,
+			Codecs:    []*core.Codec{{Name: core.CodecPCMA, ClockRate: 8000, PayloadType: 8}},
+		},
+	}, nil
 }
 
 func (p *Producer) Start() error {
@@ -92,18 +102,21 @@ func (p *Producer) Start() error {
 		}
 
 		var name string
+		var payload []byte
 		switch f.Codec {
 		case CodecH265:
-			name = core.CodecH265
+			name, payload = core.CodecH265, annexb.EncodeToAVCC(f.Payload)
 		case CodecH264:
-			name = core.CodecH264
+			name, payload = core.CodecH264, annexb.EncodeToAVCC(f.Payload)
+		case CodecPCMA:
+			name, payload = core.CodecPCMA, f.Payload // raw G.711, forwarded verbatim
 		default:
 			continue
 		}
 
 		pkt := &core.Packet{
 			Header:  rtp.Header{Timestamp: f.Timestamp, SequenceNumber: uint16(f.FrameNo)},
-			Payload: annexb.EncodeToAVCC(f.Payload),
+			Payload: payload,
 		}
 
 		for _, recv := range p.Receivers {

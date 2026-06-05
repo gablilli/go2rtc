@@ -31,8 +31,11 @@ source — hardware-accelerated where available:
 ```yaml
 streams:
   garage:      ezviz://ACCOUNT:PASSWORD@api.hik-connect.com/SERIAL?channel=4&subtype=main
-  garage_h264: ffmpeg:garage#video=h264#hardware=cuda   # drop #hardware=cuda for software
+  garage_h264: ffmpeg:garage#video=h264#audio=copy#hardware=cuda   # drop #hardware=cuda for software
 ```
+
+Keep `#audio=copy`: the interleaved G.711 (PCMA) track plays over WebRTC as-is, but
+`ffmpeg:` drops audio unless an `#audio=` directive is present.
 
 The `ffmpeg:` source pulls its input over go2rtc's internal RTSP, so the `rtsp:`
 module must stay enabled (it is by default).
@@ -47,9 +50,10 @@ module must stay enabled (it is by default).
 3. `PLAY_REQUEST` → SRT handshake → encrypted media.
 4. De-frame Hik-RTP, reassemble fragmented NALs, and hand whole H.265 / H.264
    access units to go2rtc via the RAW path; codec parameters are probed from the
-   live stream.
+   live stream. Interleaved G.711 A-law audio is surfaced on a second track.
 
 ## Status
 
 Verified end to end against real hardware (4K NVR): login → P2P → SRT → HEVC,
-sustained live preview at full resolution, `main` and `sub` both working.
+sustained live preview at full resolution, `main` and `sub` both working, with
+interleaved G.711 (A-law / PCMA) audio.
