@@ -152,69 +152,81 @@ func (a *apiClient) login(account, password string) error {
 }
 
 // getP2PConfig resolves the per-device P2P servers, NAT-mapped stream endpoint
-// and KMS secret from the device pagelist.
+// and KMS secret from the device pagelist. The endpoint is paginated, so it
+// pages until the serial is found or the device list is exhausted — accounts
+// with more than one page of devices would otherwise fail to find a camera that
+// falls beyond the first page.
 func (a *apiClient) getP2PConfig(serial string) (*p2pConfig, error) {
-	const path = "/v3/userdevices/v1/resources/pagelist" +
-		"?groupId=-1&limit=50&offset=0&filter=P2P,KMS,CONNECTION"
+	const limit = 50
 
-	req, err := http.NewRequest(http.MethodGet, a.host()+path, nil)
-	if err != nil {
-		return nil, err
-	}
-	a.headers(req)
+	for offset := 0; ; offset += limit {
+		path := fmt.Sprintf("/v3/userdevices/v1/resources/pagelist"+
+			"?groupId=-1&limit=%d&offset=%d&filter=P2P,KMS,CONNECTION", limit, offset)
 
-	resp, err := a.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("ezviz: p2p config: %w", err)
-	}
-	defer resp.Body.Close()
+		req, err := http.NewRequest(http.MethodGet, a.host()+path, nil)
+		if err != nil {
+			return nil, err
+		}
+		a.headers(req)
 
-	var out struct {
-		Meta apiMeta                `json:"meta"`
-		P2P  map[string][]apiServer `json:"P2P"`
-		KMS  map[string]struct {
-			SecretKey string `json:"secretKey"`
-			Version   string `json:"version"`
-		} `json:"KMS"`
-		CONNECTION map[string]struct {
-			NetIP         string `json:"netIp"`
-			WanIP         string `json:"wanIp"`
-			NetStreamPort int    `json:"netStreamPort"`
-		} `json:"CONNECTION"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("ezviz: p2p config decode: %w", err)
-	}
-	if out.Meta.Code != 200 {
-		return nil, fmt.Errorf("ezviz: p2p config failed: %d %s", out.Meta.Code, out.Meta.Message)
-	}
+		resp, err := a.http.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("ezviz: p2p config: %w", err)
+		}
 
-	servers, ok := out.P2P[serial]
-	if !ok {
-		return nil, fmt.Errorf("ezviz: no P2P servers for device %s", serial)
-	}
-	kms, ok := out.KMS[serial]
-	if !ok {
-		return nil, fmt.Errorf("ezviz: no KMS entry for device %s", serial)
-	}
-	conn, ok := out.CONNECTION[serial]
-	if !ok {
-		return nil, fmt.Errorf("ezviz: no CONNECTION entry for device %s", serial)
-	}
+		var out struct {
+			Meta        apiMeta                `json:"meta"`
+			DeviceInfos []json.RawMessage      `json:"deviceInfos"`
+			P2P         map[string][]apiServer `json:"P2P"`
+			KMS         map[string]struct {
+				SecretKey string `json:"secretKey"`
+				Version   string `json:"version"`
+			} `json:"KMS"`
+			CONNECTION map[string]struct {
+				NetIP         string `json:"netIp"`
+				WanIP         string `json:"wanIp"`
+				NetStreamPort int    `json:"netStreamPort"`
+			} `json:"CONNECTION"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&out)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("ezviz: p2p config decode: %w", err)
+		}
+		if out.Meta.Code != 200 {
+			return nil, fmt.Errorf("ezviz: p2p config failed: %d %s", out.Meta.Code, out.Meta.Message)
+		}
 
-	keyVersion, err := strconv.Atoi(kms.Version)
-	if err != nil {
-		return nil, fmt.Errorf("ezviz: invalid KMS version %q: %w", kms.Version, err)
-	}
+		if servers, ok := out.P2P[serial]; ok {
+			kms, ok := out.KMS[serial]
+			if !ok {
+				return nil, fmt.Errorf("ezviz: no KMS entry for device %s", serial)
+			}
+			conn, ok := out.CONNECTION[serial]
+			if !ok {
+				return nil, fmt.Errorf("ezviz: no CONNECTION entry for device %s", serial)
+			}
 
-	return &p2pConfig{
-		servers:       servers,
-		secretKey:     kms.SecretKey,
-		keyVersion:    keyVersion,
-		wanIP:         conn.WanIP,
-		netIP:         conn.NetIP,
-		netStreamPort: conn.NetStreamPort,
-	}, nil
+			keyVersion, err := strconv.Atoi(kms.Version)
+			if err != nil {
+				return nil, fmt.Errorf("ezviz: invalid KMS version %q: %w", kms.Version, err)
+			}
+
+			return &p2pConfig{
+				servers:       servers,
+				secretKey:     kms.SecretKey,
+				keyVersion:    keyVersion,
+				wanIP:         conn.WanIP,
+				netIP:         conn.NetIP,
+				netStreamPort: conn.NetStreamPort,
+			}, nil
+		}
+
+		// Last page reached without finding the serial.
+		if len(out.DeviceInfos) < limit {
+			return nil, fmt.Errorf("ezviz: no P2P servers for device %s", serial)
+		}
+	}
 }
 
 // getP2PSecret fetches the rotating account-level P2P server key and salt. The

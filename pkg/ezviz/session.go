@@ -107,7 +107,11 @@ type session struct {
 	reorderBuf    map[uint32][]byte
 
 	extractor *hikRTPExtractor
-	frameNo   uint32
+	// feedMu serializes feed(): the receive loop and the reorder flush timer can
+	// both deliver payloads, and the extractor (and playback demuxer) carry
+	// cross-packet state that must not be mutated concurrently.
+	feedMu  sync.Mutex
+	frameNo uint32
 
 	audioFrameNo uint32
 	audioTS      uint32 // 8 kHz audio sample clock
@@ -174,13 +178,16 @@ func (s *session) start() error {
 	s.wg.Add(1)
 	go s.tickerLoop()
 
-	// Step 4: wait for the SRT data session to come up (best effort).
+	// Step 4: wait for the SRT data session to come up. If it never does the
+	// device is offline, UDP/NAT is blocked, or the channel is not streaming —
+	// fail here rather than return nil and let probe's ReadFrame block forever.
 	s.waitForDataSession(15 * time.Second)
+	if s.getDataSessionID() == 0 {
+		return fmt.Errorf("ezviz: SRT data session did not start within 15s (device offline, blocked UDP/NAT, or channel %d not streaming)", s.cfg.channelNo)
+	}
 
 	// Step 5: nudge the device to start streaming with a SESSION_SETUP packet.
-	if s.getDataSessionID() != 0 {
-		s.sendSessionSetup()
-	}
+	s.sendSessionSetup()
 	return nil
 }
 
@@ -648,8 +655,11 @@ func (s *session) handleSessionSetup(buf []byte) {
 	if len(buf) < 28 {
 		return
 	}
-	// Embedded V3 message may follow; we only need to ACK the session.
-	sessionID := binary.BigEndian.Uint32(buf)
+	// Bytes 0-1 are the packet type (0x7534); the session id is the 16-bit field
+	// at bytes 2-3, mirroring the layout sendSessionSetup writes. Echo that id so
+	// the device matches the ACK to its setup exchange. Embedded V3 message, if
+	// any, follows and is not needed here.
+	sessionID := uint32(binary.BigEndian.Uint16(buf[2:]))
 	s.sendDataAck(sessionID)
 }
 
@@ -897,8 +907,13 @@ func (s *session) scheduleFlushLocked() {
 }
 
 // feed runs a delivered video payload through the Hik-RTP extractor and pushes
-// any completed NAL units onto the frames channel.
+// any completed NAL units onto the frames channel. The receive loop and the
+// reorder flush timer can call this from different goroutines, so the stateful
+// extractor work is serialized under feedMu.
 func (s *session) feed(payload []byte) {
+	s.feedMu.Lock()
+	defer s.feedMu.Unlock()
+
 	// Audio is interleaved on the same SRT data session as video, distinguished
 	// by the sub-header. Surface G.711 frames on the audio track.
 	if a := extractAudioPayload(payload); a != nil {
