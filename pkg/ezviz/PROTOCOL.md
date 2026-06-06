@@ -52,9 +52,37 @@ tag(0x07) len_be16(2) value(len)              # only when the is2BLen mask bit i
 ### Encryption
 
 When the encrypt mask bit is set the body is AES-128-CBC with a fixed IV of
-`"01234567"` followed by 8 zero bytes. The key is the per-session P2P secret
-fetched from the cloud (never hardcoded; the server rotates 8 salt-indexed keys
-and returns one per session, identified by `saltIndex`/`saltVersion`).
+`"01234567"` followed by 8 zero bytes (PKCS#7 padding). Two distinct keys are in
+play, each used as its first 16 bytes; both are fetched from the cloud per
+session and never hardcoded (see "Cloud bootstrap"):
+
+- **P2P server key** — the account-level rotating key from `POST /api/p2p/configurations`.
+  The server keeps eight salt-indexed keys and hands one back per call; the
+  `saltIndex`/`saltVersion` echoed in the mask byte tell it which one we used, and
+  any of the eight is accepted, so a freshly fetched pair always works. It
+  encrypts the **outer** layer — P2P_SETUP (0x0B02) and the TRANSFOR_DATA (0x0B04)
+  relay envelope.
+- **Link key** — the per-device key: the first 32 ASCII characters of the KMS
+  `secretKey` from the device pagelist. It encrypts the **inner** PLAY_REQUEST
+  body (0x0C02), whether sent direct or wrapped in TRANSFOR_DATA.
+
+### Expand header
+
+When the mask's `expandHeader` bit is set, a TLV block sits between the 12-byte
+base header and the (encrypted) body and `headerLen` grows to `0x0C + len(expand)`.
+The inner PLAY_REQUEST carries one; it pins the key version and routes the
+message:
+
+```
+tag   size  field
+0x00  2     key version (big-endian; matches the KMS key version)
+0x01  var   account user id (the JWT `aud` claim)
+0x02  4     client id (big-endian; a client-side correlation id, not validated)
+0x03  2     device channel (big-endian)
+```
+
+These tag numbers are exactly what the code emits; some reverse-engineering notes
+label `0x00`/`0x01` the other way around — the bytes above are authoritative.
 
 ### Opcodes used by this implementation
 
@@ -104,17 +132,55 @@ The wider tag space observed during reverse engineering, for reference:
 | `0x81` | VOICE_ENCODING   | `0xB5` | STREAM_FLAG      |
 | `0xB6` | OPT_META4        | `0xB8` | SEARCH_EXT       |
 
+## Cloud bootstrap (REST)
+
+Before any P2P traffic, three HTTPS calls to the Hik-Connect account API resolve
+everything the session needs — both encryption keys and the device's NAT-mapped
+endpoint:
+
+1. **Login** — `POST /v3/users/login/v2` with the account and the **lowercase hex
+   MD5** of the password. Returns a session id (a JWT whose `aud` claim is the
+   account user id) and the region API domain to use for the remaining calls.
+2. **Device config** — `GET /v3/userdevices/v1/resources/pagelist?filter=P2P,KMS,CONNECTION`.
+   Per device: the P2P server list, the KMS `secretKey` (its first 32 ASCII chars
+   are the link key) and the CONNECTION entry (the device's NAT-mapped stream
+   endpoint).
+3. **P2P secret** — `POST /api/p2p/configurations`. The rotating account P2P
+   server key, delivered as a decimal byte-array string (`"[12,34,…]"`, 32 signed
+   bytes) plus its `saltIndex`/`version`.
+
+This path uses plain HTTPS and an MD5 password digest only — there is no ECDH,
+CAS-broker or certificate handshake (see "Deliberately out of scope").
+
 ## P2P session flow
 
 ```
 1. P2P_SETUP (0x0B02) to every P2P server registers our NAT-mapped address
    (the server reads the source of our UDP packet, STUN-style — no public IP
    needed).
-2. The 0x0B03 response carries the device's stream port; we pre-punch to it.
+2. The 0x0B03 response carries the device's stream port; we pre-punch to it
+   (the punch payload is a single 0x00 byte, sent five times).
 3. The device sends a hole-punch request (0x0C00); we reply 0x0C01 ten times.
 4. PLAY_REQUEST (0x0C02) is sent two ways (see "Transport mix" below).
 5. The device opens an SRT connection and streams media; we ACK and reassemble.
 ```
+
+### Error codes
+
+A P2P server rejects P2P_SETUP with a status code when it cannot bring the
+session up. The ones worth recognizing (received, not parsed by the code):
+
+| Code       | Meaning                                                     |
+| ---------- | ---------------------------------------------------------- |
+| `0x101011` | device offline                                             |
+| `0x101012` | device unavailable for P2P (server-side, before any punch) |
+| `0x0E48`   | key-info mismatch                                          |
+| `0x0E16`   | decrypt with empty key                                     |
+| `0x0E4C`   | P2P-server decrypt failure                                 |
+
+The `0x0Exx` range is key/crypto rejection — a stale or wrong P2P server
+key/salt; fetch a fresh secret. The `0x1010xx` range is device availability, not
+crypto.
 
 ### Transport mix: direct vs relayed
 
@@ -133,10 +199,34 @@ Path B only relays the *control* message (a belt-and-suspenders so the device
 still receives the play request if the first direct datagram is dropped). Media
 never traverses the relay.
 
+### PLAY_REQUEST wire structure
+
+Path A is a single V3 message: 12-byte header + expand header + a body encrypted
+with the **link key**. Path B wraps that whole inner message inside a
+TRANSFOR_DATA (0x0B04) envelope encrypted with the **P2P server key**:
+
+```
+TRANSFOR_DATA (0x0B04) — P2P-server-key-encrypted body:
+  tag 0x00  device serial      (routing)
+  tag 0x07  inner V3 message   (2-byte length; the link-key-encrypted
+                                PLAY_REQUEST above, header and all)
+```
+
+The inner PLAY_REQUEST body (link-key encrypted) carries: busType (0x76), session
+key (0x05), stream type (0x78), channel (0x77), stream session (0x7e), a 4-byte
+session/timeout value (0x7d), start/stop time (0x7a/0x7b), serial (0x83), a
+session UUID (0xb2) and a millisecond timestamp (0xb3).
+
 ## Device SRT dialect
 
 The device speaks a proprietary SRT variant: an induction → conclusion handshake,
-then media data packets. It multiplexes **two SRT sub-sessions on one socket** —
+then media data packets. The device sends an induction (handshake type 1, UDT
+version 4); we answer with version 5, encryption none and the SRT magic `0x4a17`.
+The device follows with a conclusion (handshake type `0xFFFFFFFF`) and we reply
+with an HSRSP extension advertising SRT 1.4.1 (`0x00010401`). Media is never
+SRT-encrypted (the handshake encryption field is 0).
+
+It multiplexes **two SRT sub-sessions on one socket** —
 a control sub-session (type `0x807f` keepalives) and the video sub-session — with
 **independent sequence spaces**. ACKs must be routed by inner payload type so the
 control sequence space cannot pollute the video flow-control window; mixing them
@@ -149,3 +239,16 @@ Media data packets carry a Hik-RTP framing layer. `hikrtp.go` strips the
 Hik-RTP/sub headers and reassembles RFC 7798 fragmentation units (FU, NAL type
 49) into Annex-B H.265 access units. Interleaved G.711 A-law (PCMA) audio is
 demuxed onto a second track. Codec parameters are probed from the live stream.
+
+## Deliberately out of scope
+
+These were reverse-engineered but are not part of this implementation's path:
+
+- **ECDH / CAS-broker relay.** The vendor SDK can fall back to a VTM relay over an
+  ECDH-negotiated, ChaCha20 + HMAC-SHA256 channel. This implementation is
+  direct-P2P only and never relays media, so none of that crypto is needed; the
+  account API path above uses plain HTTPS + an MD5 password digest.
+- **Media-payload encryption.** When "stream encryption" is enabled on the NVR the
+  device scrambles slice data (parameter sets stay in the clear) under a
+  verification-code key schedule. This path assumes unencrypted media and does not
+  carry that schedule.
