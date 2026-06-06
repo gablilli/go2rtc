@@ -17,18 +17,23 @@ jobs:
         run: |
           git config user.email "ci@build"
           git config user.name "gablilli.bot"
-          
           git fetch origin feat/ezviz-source
           git merge origin/feat/ezviz-source --no-edit
-          
           git fetch origin feat/ezviz-p2p-transport
           git merge origin/feat/ezviz-p2p-transport --no-edit
-          
           git fetch origin feat/ezviz-discovery
           git merge origin/feat/ezviz-discovery --no-edit
-          
           git fetch origin feat/ezviz-playback
           git merge origin/feat/ezviz-playback --no-edit
+
+      - name: Mostra struttura repo
+        run: |
+          echo "=== root ==="
+          ls -la
+          echo "=== cerca main.go ==="
+          find . -name "main.go" | head -20
+          echo "=== go.mod ==="
+          cat go.mod | head -5
 
       - uses: actions/setup-go@v5
         with:
