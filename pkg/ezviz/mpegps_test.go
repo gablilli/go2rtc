@@ -14,7 +14,7 @@ func psPackHeader() []byte {
 
 // encodePTS is the inverse of parsePTS: it lays a 33-bit PTS into the 5-byte PES
 // field with the marker bits set.
-func encodePTS(pts uint32) []byte {
+func encodePTS(pts uint64) []byte {
 	return []byte{
 		byte((pts>>30)&0x07)<<1 | 0x21,
 		byte(pts >> 22),
@@ -24,7 +24,7 @@ func encodePTS(pts uint32) []byte {
 	}
 }
 
-func psPES(streamID byte, es []byte, pts uint32) []byte {
+func psPES(streamID byte, es []byte, pts uint64) []byte {
 	body := append([]byte{0x80, 0x80, 0x05}, encodePTS(pts)...)
 	body = append(body, es...)
 	pkt := []byte{0x00, 0x00, 0x01, streamID, byte(len(body) >> 8), byte(len(body))}
@@ -48,7 +48,9 @@ const (
 )
 
 func TestParsePTSRoundTrip(t *testing.T) {
-	for _, pts := range []uint32{0, 1, 9000, 90000, 0x1FFFFFFF, 0xFFFFFFFF} {
+	// Include 33-bit values (>0xFFFFFFFF) to prove the full PTS width survives:
+	// audio rescaling must see the untruncated value, not a 32-bit wrap.
+	for _, pts := range []uint64{0, 1, 9000, 90000, 0x1FFFFFFF, 0xFFFFFFFF, 1 << 32, 0x1FFFFFFFF} {
 		if got := parsePTS(encodePTS(pts)); got != pts {
 			t.Errorf("parsePTS(encodePTS(%d)) = %d", pts, got)
 		}
@@ -61,6 +63,11 @@ func TestRescale(t *testing.T) {
 	}
 	if got := rescale(0, 90000, 8000); got != 0 {
 		t.Errorf("zero: %d", got)
+	}
+	// A 33-bit PTS must rescale from its full value, not a 32-bit truncation:
+	// 0x1_0000_2710 (1<<32 + 10000) at 90 kHz -> 8 kHz.
+	if got := rescale(1<<32+10000, 90000, 8000); got != uint32(uint64(1<<32+10000)*8000/90000) {
+		t.Errorf("33-bit: %d", got)
 	}
 }
 

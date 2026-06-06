@@ -550,8 +550,15 @@ func (s *session) handlePacket(buf []byte, src *net.UDPAddr) {
 		s.sendToDevice(resp)
 		return
 	case srtCtrlAck, srtCtrlShutdown, srtCtrlAck2, srtCtrlNak:
-		// ACK / NAK / ACK2 / shutdown — nothing to do. (0x8002/0x8003/0x8006
-		// also cover the custom DATA_ACK / DATA_REF / SHORT_ACK aliases.)
+		// ACK / NAK / ACK2 / shutdown — nothing to do. (0x8002/0x8003/0x8006 also
+		// cover the custom DATA_ACK / DATA_REF / SHORT_ACK aliases.) Despite its
+		// name, 0x8005 is NOT an end-of-stream signal in this dialect: live and
+		// playback captures both show exactly one 0x8005 arriving early (the device
+		// tearing down the control sub-session once the video sub-session is up),
+		// after which media streams normally for the rest of the session. Closing
+		// on it truncates the stream ~5s in. Playback simply streams from the start
+		// time until the consumer disconnects; the device sends neither a PS
+		// program-end marker nor a distinct end-of-window shutdown.
 		return
 	case pktSessionSetup:
 		s.handleSessionSetup(buf)
@@ -1114,22 +1121,7 @@ func (s *session) close() error {
 
 func (s *session) closeFrames() {
 	// Close frames exactly once; readFrame also unblocks via closeCh.
-	s.framesOnce.Do(func() {
-		// Playback holds the final access unit until the next PTS, which never
-		// arrives at end-of-stream — flush it before signaling EOF so the tail of
-		// the recording (a one-AU window, the whole clip) is not truncated. The
-		// send is non-blocking: on the Close path the consumer has already stopped
-		// reading, so a full buffer just drops the trailing AU.
-		if s.cfg.busType == 2 {
-			for _, f := range s.pb.flush() {
-				select {
-				case s.frames <- f:
-				default:
-				}
-			}
-		}
-		close(s.frames)
-	})
+	s.framesOnce.Do(func() { close(s.frames) })
 }
 
 func (s *session) sendTeardown() {

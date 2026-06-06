@@ -143,14 +143,16 @@ func (d *psDemuxer) commit(consumed int, out []*Frame) []*Frame {
 
 // feedVideo appends a video PES payload to the current access unit. A PES that
 // carries a PTS closes the previous AU and opens a new one.
-func (d *psDemuxer) feedVideo(out []*Frame, es []byte, pts uint32, hasPTS bool) []*Frame {
+func (d *psDemuxer) feedVideo(out []*Frame, es []byte, pts uint64, hasPTS bool) []*Frame {
 	if hasPTS && d.auOpen {
 		out = append(out, d.emitAU()...)
 		d.auData = d.auData[:0]
 		d.auOpen = false
 	}
 	if hasPTS {
-		d.auPTS = pts
+		// Video keeps the low 32 bits: that is the RTP timestamp width and wraps
+		// the same way the 90 kHz clock does.
+		d.auPTS = uint32(pts)
 		d.auOpen = true
 	}
 	d.auData = append(d.auData, es...)
@@ -207,7 +209,7 @@ func lengthPrefixedLen(b []byte) (int, bool) {
 
 // parsePESPayload splits a PES packet body (everything after the 6-byte
 // start-code+length) into its elementary-stream bytes and optional PTS.
-func parsePESPayload(b []byte) (es []byte, pts uint32, hasPTS bool) {
+func parsePESPayload(b []byte) (es []byte, pts uint64, hasPTS bool) {
 	if len(b) < 3 {
 		return b, 0, false
 	}
@@ -222,26 +224,25 @@ func parsePESPayload(b []byte) (es []byte, pts uint32, hasPTS bool) {
 	return b[3+headerLen:], pts, hasPTS
 }
 
-// parsePTS decodes the 33-bit PTS from the 5-byte PES field (truncated to 32
-// bits, which is the RTP timestamp width and wraps the same way).
-func parsePTS(b []byte) uint32 {
-	v := uint64(b[0]&0x0E)<<29 |
+// parsePTS decodes the full 33-bit PTS from the 5-byte PES field. The caller
+// keeps the full width and only narrows where a 32-bit clock is required (video
+// AU timestamps), so audio rescaling sees the untruncated value.
+func parsePTS(b []byte) uint64 {
+	return uint64(b[0]&0x0E)<<29 |
 		uint64(b[1])<<22 |
 		uint64(b[2]&0xFE)<<14 |
 		uint64(b[3])<<7 |
 		uint64(b[4])>>1
-	return uint32(v)
 }
 
-// rescale converts a tick count from one clock rate to another.
-func rescale(ticks uint32, from, to uint32) uint32 {
-	return uint32(uint64(ticks) * uint64(to) / uint64(from))
+// rescale converts a tick count from one clock rate to another. The input is the
+// full-width PTS; the result is truncated to the 32-bit timestamp field.
+func rescale(ticks uint64, from, to uint32) uint32 {
+	return uint32(ticks * uint64(to) / uint64(from))
 }
 
 // splitAnnexB splits an Annex-B buffer into individual NAL units, each returned
-// with a leading 4-byte start code so the Producer can convert it to AVCC. A
-// trailing zero byte that belongs to the next NAL's 4-byte start code is
-// harmless and left on the prior NAL.
+// with a leading 4-byte start code so the Producer can convert it to AVCC.
 func splitAnnexB(b []byte) [][]byte {
 	var nals [][]byte
 	starts := annexBStarts(b)
@@ -249,6 +250,13 @@ func splitAnnexB(b []byte) [][]byte {
 		end := len(b)
 		if idx+1 < len(starts) {
 			end = starts[idx+1]
+			// annexBStarts records the 00 00 01 triplet, so a 0x00 immediately
+			// before the next start code is that code's leading byte (a 4-byte
+			// 00 00 00 01), not part of this NAL — drop it so it does not end up
+			// inside the AVCC payload and corrupt strict parameter-set parsers.
+			if end-1 >= s+3 && b[end-1] == 0x00 {
+				end--
+			}
 		}
 		nal := b[s+3 : end] // skip the 3-byte 00 00 01 start code
 		if len(nal) == 0 {

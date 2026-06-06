@@ -101,7 +101,9 @@ func parseURL(rawURL string) (config, error) {
 	}
 
 	// Playback window. Presence of start switches the session to recording
-	// playback (busType=2); end is optional.
+	// playback (busType=2). Both ends are required: the window is camera-local
+	// wall clock, so we cannot synthesize a default end without knowing the
+	// camera's timezone (the go2rtc host clock would be wrong under Docker/UTC).
 	if v := q.Get("start"); v != "" {
 		if cfg.start, err = parsePlaybackTime(v); err != nil {
 			return config{}, fmt.Errorf("ezviz: bad start %q: %w", v, err)
@@ -114,6 +116,9 @@ func parseURL(rawURL string) (config, error) {
 	}
 	if cfg.stop != "" && !cfg.isPlayback() {
 		return config{}, errors.New("ezviz: end requires start")
+	}
+	if cfg.isPlayback() && cfg.stop == "" {
+		return config{}, errors.New("ezviz: playback requires both start and end (camera-local wall clock)")
 	}
 
 	if cfg.account == "" || cfg.password == "" || cfg.serial == "" {

@@ -82,6 +82,14 @@ func TestParseURLEndRequiresStart(t *testing.T) {
 	}
 }
 
+func TestParseURLStartRequiresEnd(t *testing.T) {
+	// The playback window is camera-local wall clock; no default end can be
+	// synthesized without the camera timezone, so start alone must error.
+	if _, err := parseURL("ezviz://a@b.com:p@h/SERIAL?start=2026-06-05T19:00:00"); err == nil {
+		t.Fatal("start without end must error")
+	}
+}
+
 func TestParsePlaybackTime(t *testing.T) {
 	// Wall-clock is preserved verbatim — no timezone shift (the device interprets
 	// the window in its own local time).

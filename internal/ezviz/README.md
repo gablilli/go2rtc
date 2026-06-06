@@ -35,7 +35,9 @@ streams:
 
 - `start` — recording window start (required to enter playback). Accepts
   `2026-06-05T19:00:00`, `2026-06-05 19:00:00`, or RFC 3339.
-- `end` — window end (optional; defaults to "now").
+- `end` — window end (also required). Times are camera-local wall clock, so no
+  default can be synthesized — the go2rtc host clock (often UTC under Docker)
+  would pick the wrong window — and both ends must be given explicitly.
 
 Times are **camera-local** — they are sent to the device verbatim with no
 timezone conversion, so use the wall-clock shown on the camera's own overlay.
