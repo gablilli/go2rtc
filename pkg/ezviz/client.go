@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // config is parsed from the source URL:
@@ -19,7 +20,17 @@ type config struct {
 	serial   string // device serial
 	channel  int    // 1-based channel
 	subtype  string // "main" (busType main stream) | "sub"
+
+	// Playback (busType=2): set when the URL carries a start time. Live preview
+	// (busType=1) leaves these zero.
+	start string // recording window start, device format YYYY-MM-DDThh:mm:ss
+	stop  string // recording window end (optional)
 }
+
+// isPlayback reports whether the URL requested a recording window rather than
+// live preview. A start time is the trigger, mirroring how the Milestone source
+// switches to playback when a playbackTime is present.
+func (c config) isPlayback() bool { return c.start != "" }
 
 // Client is the Hik-Connect / EZVIZ cloud P2P transport.
 //
@@ -89,10 +100,42 @@ func parseURL(rawURL string) (config, error) {
 		cfg.subtype = v
 	}
 
+	// Playback window. Presence of start switches the session to recording
+	// playback (busType=2); end is optional.
+	if v := q.Get("start"); v != "" {
+		if cfg.start, err = parsePlaybackTime(v); err != nil {
+			return config{}, fmt.Errorf("ezviz: bad start %q: %w", v, err)
+		}
+	}
+	if v := q.Get("end"); v != "" {
+		if cfg.stop, err = parsePlaybackTime(v); err != nil {
+			return config{}, fmt.Errorf("ezviz: bad end %q: %w", v, err)
+		}
+	}
+	if cfg.stop != "" && !cfg.isPlayback() {
+		return config{}, errors.New("ezviz: end requires start")
+	}
+
 	if cfg.account == "" || cfg.password == "" || cfg.serial == "" {
 		return config{}, errors.New("ezviz: url needs account:password@host/serial")
 	}
 	return cfg, nil
+}
+
+// deviceTimeLayout is the timestamp format the device's PLAY_REQUEST expects.
+const deviceTimeLayout = "2006-01-02T15:04:05"
+
+// parsePlaybackTime accepts a few common timestamp spellings and normalizes them
+// to the device's layout. The wall-clock value is passed through verbatim — the
+// device interprets the window in its own configured timezone, so the user
+// specifies camera-local time and we must not shift it.
+func parsePlaybackTime(v string) (string, error) {
+	for _, layout := range []string{deviceTimeLayout, time.RFC3339, "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, v); err == nil {
+			return t.Format(deviceTimeLayout), nil
+		}
+	}
+	return "", fmt.Errorf("want %s", deviceTimeLayout)
 }
 
 // connect performs: login → P2P config + secret fetch → assemble the session
@@ -152,7 +195,9 @@ func (c *Client) connect() error {
 		clientID:         randomClientID(),
 		channelNo:        c.cfg.channel,
 		streamType:       streamTypeFor(c.cfg.subtype),
-		busType:          1, // live preview
+		busType:          busTypeFor(c.cfg),
+		startTime:        c.cfg.start,
+		stopTime:         c.cfg.stop,
 	}
 
 	sess, err := newSession(cfg)
@@ -174,6 +219,14 @@ func (c *Client) connect() error {
 // streamTypeFor maps a URL subtype to the device stream type: main=1, sub=2.
 func streamTypeFor(subtype string) int {
 	if subtype == "sub" {
+		return 2
+	}
+	return 1
+}
+
+// busTypeFor selects live preview (1) or recording playback (2).
+func busTypeFor(cfg config) int {
+	if cfg.isPlayback() {
 		return 2
 	}
 	return 1

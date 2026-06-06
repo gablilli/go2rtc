@@ -75,8 +75,10 @@ type sessionConfig struct {
 	userID           string
 	clientID         uint32
 	channelNo        int
-	streamType       int // 1=main, 2=sub
-	busType          int // 1=live preview, 2=playback
+	streamType       int    // 1=main, 2=sub
+	busType          int    // 1=live preview, 2=playback
+	startTime        string // playback window start, device format YYYY-MM-DDThh:mm:ss
+	stopTime         string // playback window end
 }
 
 // session holds the live UDP transport state.
@@ -107,6 +109,7 @@ type session struct {
 	reorderBuf    map[uint32][]byte
 
 	extractor *hikRTPExtractor
+	pb        *psDemuxer // playback (busType=2) MPEG-PS demux; nil for live
 	// feedMu serializes feed(): the receive loop and the reorder flush timer can
 	// both deliver payloads, and the extractor (and playback demuxer) carry
 	// cross-packet state that must not be mutated concurrently.
@@ -150,6 +153,7 @@ func newSession(cfg sessionConfig) (*session, error) {
 		reorderBuf:    make(map[uint32][]byte),
 		extractor:     newHikRTPExtractor(),
 		frames:        make(chan *Frame, 256),
+		pb:            newPSDemuxer(),
 		punchCh:       make(chan struct{}),
 		dataCh:        make(chan struct{}),
 		closeCh:       make(chan struct{}),
@@ -349,8 +353,18 @@ func (s *session) buildPlayRequestBody() []byte {
 
 	now := time.Now()
 	today := now.Format("2006-01-02")
+
+	// Live preview ignores the time window but the device still expects the
+	// fields; default to "today so far". Playback (busType=2) overrides both with
+	// the requested recording window.
 	start := today + "T00:00:00"
 	stop := today + "T" + now.Format("15:04:05")
+	if s.cfg.startTime != "" {
+		start = s.cfg.startTime
+	}
+	if s.cfg.stopTime != "" {
+		stop = s.cfg.stopTime
+	}
 
 	var body []byte
 	body = appendTLV(body, AttrBusType, []byte{s.busType()})
@@ -914,6 +928,19 @@ func (s *session) feed(payload []byte) {
 	s.feedMu.Lock()
 	defer s.feedMu.Unlock()
 
+	// Playback (busType=2) is an MPEG Program Stream, not Hik-RTP-framed NALs:
+	// strip the 12-byte header and let the PS demuxer reconstruct access units.
+	if s.cfg.busType == 2 {
+		frag := extractPlaybackPayload(payload)
+		if frag == nil {
+			return
+		}
+		for _, f := range s.pb.write(frag) {
+			s.push(f)
+		}
+		return
+	}
+
 	// Audio is interleaved on the same SRT data session as video, distinguished
 	// by the sub-header. Surface G.711 frames on the audio track.
 	if a := extractAudioPayload(payload); a != nil {
@@ -1087,7 +1114,22 @@ func (s *session) close() error {
 
 func (s *session) closeFrames() {
 	// Close frames exactly once; readFrame also unblocks via closeCh.
-	s.framesOnce.Do(func() { close(s.frames) })
+	s.framesOnce.Do(func() {
+		// Playback holds the final access unit until the next PTS, which never
+		// arrives at end-of-stream — flush it before signaling EOF so the tail of
+		// the recording (a one-AU window, the whole clip) is not truncated. The
+		// send is non-blocking: on the Close path the consumer has already stopped
+		// reading, so a full buffer just drops the trailing AU.
+		if s.cfg.busType == 2 {
+			for _, f := range s.pb.flush() {
+				select {
+				case s.frames <- f:
+				default:
+				}
+			}
+		}
+		close(s.frames)
+	})
 }
 
 func (s *session) sendTeardown() {
