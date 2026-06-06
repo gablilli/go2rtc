@@ -42,8 +42,6 @@ const (
 	pktConnControl  uint16 = 0x8000
 	pktKeepalive    uint16 = 0x8001
 	pktDataAck      uint16 = 0x8002
-	pktDataRef      uint16 = 0x8003
-	pktShortAck     uint16 = 0x8006
 
 	// SRT control subtypes (F=1, the 0x80xx family).
 	srtCtrlHandshake uint16 = 0x8000
@@ -79,8 +77,6 @@ type sessionConfig struct {
 	channelNo        int
 	streamType       int // 1=main, 2=sub
 	busType          int // 1=live preview, 2=playback
-	startTime        string
-	stopTime         string
 }
 
 // session holds the live UDP transport state.
@@ -346,14 +342,8 @@ func (s *session) buildPlayRequestBody() []byte {
 
 	now := time.Now()
 	today := now.Format("2006-01-02")
-	start := s.cfg.startTime
-	if start == "" {
-		start = today + "T00:00:00"
-	}
-	stop := s.cfg.stopTime
-	if stop == "" {
-		stop = today + "T" + now.Format("15:04:05")
-	}
+	start := today + "T00:00:00"
+	stop := today + "T" + now.Format("15:04:05")
 
 	var body []byte
 	body = appendTLV(body, AttrBusType, []byte{s.busType()})
@@ -909,15 +899,6 @@ func (s *session) scheduleFlushLocked() {
 // feed runs a delivered video payload through the Hik-RTP extractor and pushes
 // any completed NAL units onto the frames channel.
 func (s *session) feed(payload []byte) {
-	if s.cfg.busType == 2 {
-		nal := extractPlaybackPayload(payload)
-		if nal == nil {
-			return
-		}
-		s.push(&Frame{Codec: CodecH265, Payload: nal, Timestamp: s.nextTimestamp(), FrameNo: s.nextFrameNo()})
-		return
-	}
-
 	// Audio is interleaved on the same SRT data session as video, distinguished
 	// by the sub-header. Surface G.711 frames on the audio track.
 	if a := extractAudioPayload(payload); a != nil {

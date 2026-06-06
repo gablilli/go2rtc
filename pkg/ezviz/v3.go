@@ -32,31 +32,21 @@ const (
 	V3HeaderLen = 12
 )
 
-// Opcodes (message types, big-endian at offset 2).
+// Opcodes (message types, big-endian at offset 2). Only the opcodes this
+// implementation sends or handles are defined; PROTOCOL.md lists the wider set
+// the device protocol defines.
 const (
-	OpTransforSetup  uint16 = 0x0b00
-	OpP2PSetup       uint16 = 0x0b02
-	OpTransforCtrl   uint16 = 0x0b03
-	OpTransforData   uint16 = 0x0b04
-	OpTransforData2  uint16 = 0x0b05
-	OpPunchRequest   uint16 = 0x0c00 // device -> client: hole-punch request
-	OpPunchResponse  uint16 = 0x0c01 // client -> device: hole-punch response
-	OpPlayRequest    uint16 = 0x0c02
-	OpTeardown       uint16 = 0x0c04
-	OpVoiceTalk      uint16 = 0x0c07
-	OpCTCheck        uint16 = 0x0c08
-	OpStreamCtrl     uint16 = 0x0c0a
-	OpDataLink       uint16 = 0x0c0b
-	OpPlaybackPause  uint16 = 0x0c10
-	OpPlaybackResume uint16 = 0x0c12
-	OpPlaybackSeek   uint16 = 0x0c14
-	OpPlaybackSearch uint16 = 0x0c16
-	OpPlaybackCtrl3  uint16 = 0x0c18
-	OpTransparent    uint16 = 0x0d00
-	OpTransparent2   uint16 = 0x0d02
+	OpP2PSetup      uint16 = 0x0b02
+	OpTransforCtrl  uint16 = 0x0b03
+	OpTransforData  uint16 = 0x0b04
+	OpPunchRequest  uint16 = 0x0c00 // device -> client: hole-punch request
+	OpPunchResponse uint16 = 0x0c01 // client -> device: hole-punch response
+	OpPlayRequest   uint16 = 0x0c02
+	OpTeardown      uint16 = 0x0c04
 )
 
-// Attribute tags (the T in the body TLVs).
+// Attribute tags (the T in the body TLVs). Only the tags this implementation
+// emits or reads are defined; PROTOCOL.md documents the wider tag space.
 const (
 	AttrTransforData     byte = 0x00
 	AttrExpandKeyVersion byte = 0x01
@@ -66,36 +56,18 @@ const (
 	AttrSessionKey       byte = 0x05
 	AttrSessionInfo      byte = 0x06
 	AttrLargeData        byte = 0x07
-	AttrCTStep           byte = 0x09
-	AttrCTData           byte = 0x0a
-	AttrBusTypePreview   byte = 0x71
 	AttrBusType          byte = 0x76
 	AttrChannelNo        byte = 0x77
 	AttrStreamType       byte = 0x78
-	AttrStreamInfo       byte = 0x79
 	AttrStartTime        byte = 0x7a
 	AttrStopTime         byte = 0x7b
-	AttrStreamParam      byte = 0x7c
 	AttrDeviceSessionAlt byte = 0x7d
 	AttrStreamSession    byte = 0x7e
-	AttrStreamControl    byte = 0x80
-	AttrVoiceEncoding    byte = 0x81
 	AttrPortCount        byte = 0x82
 	AttrStreamMeta       byte = 0x83
 	AttrDeviceSession    byte = 0x84
-	AttrSeekRate         byte = 0x85
-	AttrDataLinkVal      byte = 0x87
-	AttrTransparentExt   byte = 0x8d
-	AttrExtParam1        byte = 0xae
-	AttrExtParam2        byte = 0xaf
-	AttrTimeSegment      byte = 0xb0
-	AttrSeekMeta         byte = 0xb1
 	AttrOptMeta1         byte = 0xb2
 	AttrOptMeta2         byte = 0xb3
-	AttrOptMeta3         byte = 0xb4
-	AttrStreamFlag       byte = 0xb5
-	AttrOptMeta4         byte = 0xb6
-	AttrSearchExt        byte = 0xb8
 	AttrEndMarker        byte = 0xff
 )
 

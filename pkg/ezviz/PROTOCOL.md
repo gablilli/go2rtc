@@ -68,6 +68,42 @@ and returns one per session, identified by `saltIndex`/`saltVersion`).
 | `0x0C02` | PLAY_REQUEST   | Start the stream (busType/channel/streamType/session)       |
 | `0x0C04` | TEARDOWN       | Stop the stream                                             |
 
+### Other opcodes seen in the protocol (not implemented)
+
+These exist in `libezstreamclient.so` but are not needed for cloud streaming, so
+the code does not define or send them. Kept here as a reverse-engineering
+reference:
+
+| Opcode   | Name            | Purpose (observed)                          |
+| -------- | --------------- | ------------------------------------------- |
+| `0x0B00` | TRANSFOR_SETUP  | Alternate setup variant                     |
+| `0x0B05` | TRANSFOR_DATA2  | Alternate relay-data variant                |
+| `0x0C07` | VOICE_TALK      | Two-way audio backchannel                   |
+| `0x0C08` | CT_CHECK        | Capability/connection check                 |
+| `0x0C0A` | STREAM_CTRL     | In-stream control (pause/seek family)       |
+| `0x0C0B` | DATA_LINK       | Data-link negotiation                       |
+| `0x0D00` | TRANSPARENT     | Transparent ISAPI passthrough               |
+| `0x0D02` | TRANSPARENT2    | Transparent passthrough variant             |
+
+The two SRT control subtypes `0x8003` (DATA_REF / NAK) and `0x8006` (SHORT_ACK /
+ACK2) are likewise part of the dialect but are only ever received and ignored,
+so they have no dedicated constant.
+
+### Other attribute tags seen in the protocol (not used)
+
+PLAY_REQUEST and the setup messages only populate the tags listed in `v3.go`.
+The wider tag space observed during reverse engineering, for reference:
+
+| Tag    | Name             | Tag    | Name             |
+| ------ | ---------------- | ------ | ---------------- |
+| `0x09` | CT_STEP          | `0x87` | DATA_LINK_VAL    |
+| `0x0A` | CT_DATA          | `0x8D` | TRANSPARENT_EXT  |
+| `0x79` | STREAM_INFO      | `0xAE` | EXT_PARAM1       |
+| `0x7C` | STREAM_PARAM     | `0xAF` | EXT_PARAM2       |
+| `0x80` | STREAM_CONTROL   | `0xB4` | OPT_META3        |
+| `0x81` | VOICE_ENCODING   | `0xB5` | STREAM_FLAG      |
+| `0xB6` | OPT_META4        | `0xB8` | SEARCH_EXT       |
+
 ## P2P session flow
 
 ```

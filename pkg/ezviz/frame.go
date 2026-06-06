@@ -6,7 +6,6 @@ package ezviz
 const (
 	CodecH265 byte = iota + 1
 	CodecH264
-	CodecAAC
 	CodecPCMA // G.711 A-law, 8 kHz mono — interleaved live audio
 )
 
