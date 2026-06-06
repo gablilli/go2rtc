@@ -16,7 +16,7 @@ jobs:
       - name: Merge ezviz PRs in ordine
         run: |
           git config user.email "ci@build"
-          git config user.name "gablilli.bot"
+          git config user.name "CI"
           git fetch origin feat/ezviz-source
           git merge origin/feat/ezviz-source --no-edit
           git fetch origin feat/ezviz-p2p-transport
@@ -26,21 +26,12 @@ jobs:
           git fetch origin feat/ezviz-playback
           git merge origin/feat/ezviz-playback --no-edit
 
-      - name: Mostra struttura repo
-        run: |
-          echo "=== root ==="
-          ls -la
-          echo "=== cerca main.go ==="
-          find . -name "main.go" | head -20
-          echo "=== go.mod ==="
-          cat go.mod | head -5
-
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.26'
 
       - name: Build
-        run: go build -o go2rtc ./cmd/go2rtc/
+        run: go build -o go2rtc .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
