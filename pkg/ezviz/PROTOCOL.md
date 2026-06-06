@@ -249,6 +249,9 @@ PLAY_REQUEST carries a `busType` attribute (`0x76`) selecting the source:
 | 1       | live preview      | a "today so far" date; live plays correctly with it (its effect on live is untested) |
 | 2       | recording playback| the requested window, camera-local wall clock  |
 
+The device also defines `busType` 3 (two-way talk) and 4 (a playback variant);
+this implementation only uses 1 and 2.
+
 The two modes also differ on the wire:
 
 - **Live (busType=1)** streams Hik-RTP-framed H.265 NAL units (see above).
@@ -259,6 +262,21 @@ The two modes also differ on the wire:
   then PES packets (`0xE0`–`0xEF` H.265 video, `0xC0`–`0xDF` G.711 audio) — back
   into the same Annex-B + PCMA Frame stream the live path produces, so the
   Producer is unchanged. Video access units are delimited by the PES PTS.
+
+### Playback transport control (not implemented)
+
+This implementation streams the fixed `[start, stop]` window in one shot: there
+is no pause, resume, seek or speed control. The device exposes a dedicated set of
+in-stream playback-control opcodes for that, kept here as a reverse-engineering
+reference:
+
+| Opcode   | Name             | Purpose (observed)        |
+| -------- | ---------------- | ------------------------- |
+| `0x0C10` | PLAYBACK_PAUSE   | pause playback            |
+| `0x0C12` | PLAYBACK_RESUME  | resume playback           |
+| `0x0C14` | PLAYBACK_SEEK    | seek / set playback rate  |
+| `0x0C16` | PLAYBACK_SEARCH  | search by time segment    |
+| `0x0C18` | PLAYBACK_CTRL3   | further playback control  |
 
 ## Deliberately out of scope
 
